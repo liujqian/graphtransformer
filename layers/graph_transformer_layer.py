@@ -35,48 +35,35 @@ def scaled_exp(field, scale_constant):
 
 
 class MultiHeadAttentionLayer(nn.Module):
-    def __init__(self, in_dim, out_dim, num_heads, use_bias):
+    def __init__(self, in_dim, head_dim, num_heads, use_bias):
         super().__init__()
 
-        self.out_dim = out_dim
+        self.head_dim = head_dim
         self.num_heads = num_heads
 
         if use_bias:
-            self.Q = nn.Linear(in_dim, out_dim * num_heads, bias=True)
-            self.K = nn.Linear(in_dim, out_dim * num_heads, bias=True)
-            self.V = nn.Linear(in_dim, out_dim * num_heads, bias=True)
+            self.Q = nn.Linear(in_dim, head_dim * num_heads, bias=True)
+            self.K = nn.Linear(in_dim, head_dim * num_heads, bias=True)
+            self.V = nn.Linear(in_dim, head_dim * num_heads, bias=True)
         else:
-            self.Q = nn.Linear(in_dim, out_dim * num_heads, bias=False)
-            self.K = nn.Linear(in_dim, out_dim * num_heads, bias=False)
-            self.V = nn.Linear(in_dim, out_dim * num_heads, bias=False)
+            self.Q = nn.Linear(in_dim, head_dim * num_heads, bias=False)
+            self.K = nn.Linear(in_dim, head_dim * num_heads, bias=False)
+            self.V = nn.Linear(in_dim, head_dim * num_heads, bias=False)
 
-    def propagate_attention(self, g):
-        # Compute attention score
-        g.apply_edges(src_dot_dst('K_h', 'Q_h', 'score'))  # , edges)
-        g.apply_edges(scaled_exp('score', np.sqrt(self.out_dim)))
+    def forward(
+            self,
+            h: torch.Tensor  # [n, d_in]
+    ):
+        sequence_length = h.size()[0]
+        Q_h = self.Q(h).view(1, sequence_length, self.num_heads, self.head_dim).transpose(1, 2)
+        K_h = self.K(h).view(1, sequence_length, self.num_heads, self.head_dim).transpose(1, 2)
+        V_h = self.V(h).view(1, sequence_length, self.num_heads, self.head_dim).transpose(1, 2)
+        attn_scores = torch.matmul(Q_h, K_h.transpose(-2, -1)) / (self.head_dim ** 0.5)  # [1, num_heads, seq_len, seq_len]
+        attn_probs = F.softmax(attn_scores, dim=-1)  # [1, num_heads, seq_len, seq_len]
+        attn_output = torch.matmul(attn_probs, V_h)  # [1, num_heads, seq_len, d_v]
+        attn_output = attn_output.transpose(1, 2).contiguous().view(sequence_length, self.num_heads * self.head_dim)  # [seq_len, num_heads*d_h]
 
-        # Send weighted values to target nodes
-        eids = g.edges()
-        g.send_and_recv(eids, fn.u_mul_e('V_h', 'score', 'V_h'), fn.sum('V_h', 'wV'))
-        g.send_and_recv(eids, fn.copy_e('score', 'score'), fn.sum('score', 'z'))
-
-    def forward(self, g, h):
-
-        Q_h = self.Q(h)
-        K_h = self.K(h)
-        V_h = self.V(h)
-
-        # Reshaping into [num_nodes, num_heads, feat_dim] to 
-        # get projections for multi-head attention
-        g.ndata['Q_h'] = Q_h.view(-1, self.num_heads, self.out_dim)
-        g.ndata['K_h'] = K_h.view(-1, self.num_heads, self.out_dim)
-        g.ndata['V_h'] = V_h.view(-1, self.num_heads, self.out_dim)
-
-        self.propagate_attention(g)
-
-        head_out = g.ndata['wV'] / g.ndata['z']
-
-        return head_out
+        return attn_output
 
 
 class GraphTransformerLayer(nn.Module):
@@ -139,7 +126,7 @@ class GraphTransformerLayer(nn.Module):
 
         # FFN
         h = self.FFN_layer1(h)
-        h = F.relu(h)
+        h = F.gelu(h)
         h = F.dropout(h, self.dropout, training=self.training)
         h = self.FFN_layer2(h)
 
