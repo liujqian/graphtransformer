@@ -55,13 +55,13 @@ class MultiHeadAttentionLayer(nn.Module):
             h: torch.Tensor  # [n, d_in]
     ):
         sequence_length = h.size()[0]
-        Q_h = self.Q(h).view(1, sequence_length, self.num_heads, self.head_dim).transpose(1, 2)
-        K_h = self.K(h).view(1, sequence_length, self.num_heads, self.head_dim).transpose(1, 2)
-        V_h = self.V(h).view(1, sequence_length, self.num_heads, self.head_dim).transpose(1, 2)
-        attn_scores = torch.matmul(Q_h, K_h.transpose(-2, -1)) / (self.head_dim ** 0.5)  # [1, num_heads, seq_len, seq_len]
-        attn_probs = F.softmax(attn_scores, dim=-1)  # [1, num_heads, seq_len, seq_len]
-        attn_output = torch.matmul(attn_probs, V_h)  # [1, num_heads, seq_len, d_v]
-        attn_output = attn_output.transpose(1, 2).contiguous().view(sequence_length, self.num_heads * self.head_dim)  # [seq_len, num_heads*d_h]
+        Q_h = self.Q(h).view(sequence_length, self.num_heads, self.head_dim).transpose(0, 1)
+        K_h = self.K(h).view(sequence_length, self.num_heads, self.head_dim).transpose(0, 1)
+        V_h = self.V(h).view(sequence_length, self.num_heads, self.head_dim).transpose(0, 1)  # [num_heads, seq_len, d_h]
+        attn_scores = torch.matmul(Q_h, K_h.transpose(-2, -1)) / (self.head_dim ** 0.5)  # [num_heads, seq_len, seq_len]
+        attn_probs = F.softmax(attn_scores, dim=-1)  # [num_heads, seq_len, seq_len]
+        attn_output = torch.matmul(attn_probs, V_h)  # [num_heads, seq_len, d_h]
+        attn_output = attn_output.transpose(0, 1).contiguous().view(sequence_length, self.num_heads * self.head_dim)  # [seq_len, num_heads*d_h]
 
         return attn_output
 
@@ -102,11 +102,11 @@ class GraphTransformerLayer(nn.Module):
         if self.batch_norm:
             self.batch_norm2 = nn.BatchNorm1d(out_dim)
 
-    def forward(self, g, h):
+    def forward(self, h):
         h_in1 = h  # for first residual connection
 
         # multi-head attention out
-        attn_out = self.attention(g, h)
+        attn_out = self.attention(h)
         h = attn_out.view(-1, self.out_channels)
 
         h = F.dropout(h, self.dropout, training=self.training)
