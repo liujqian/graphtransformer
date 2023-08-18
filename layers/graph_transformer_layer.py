@@ -1,5 +1,3 @@
-import dgl.function as fn
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -36,6 +34,7 @@ def scaled_exp(field, scale_constant):
 
 class MultiHeadAttentionLayer(nn.Module):
     def __init__(self, in_dim, head_dim, num_heads, use_bias):
+        # out_dim = head_dim * num_heads = in_dim
         super().__init__()
 
         self.head_dim = head_dim
@@ -55,10 +54,24 @@ class MultiHeadAttentionLayer(nn.Module):
             h: torch.Tensor  # [n, d_in]
     ):
         sequence_length = h.size()[0]
-        Q_h = self.Q(h).view(sequence_length, self.num_heads, self.head_dim).transpose(0, 1)
-        K_h = self.K(h).view(sequence_length, self.num_heads, self.head_dim).transpose(0, 1)
-        V_h = self.V(h).view(sequence_length, self.num_heads, self.head_dim).transpose(0, 1)  # [num_heads, seq_len, d_h]
-        attn_scores = torch.matmul(Q_h, K_h.transpose(-2, -1)) / (self.head_dim ** 0.5)  # [num_heads, seq_len, seq_len]
+        Q_h = self.Q(h)
+        K_h = self.K(h)
+        V_h = self.V(h)  # [seq_len,  head_dim * num_heads]
+
+        Q_h = Q_h.view(sequence_length, self.num_heads, self.head_dim)  # [seq_len, num_heads, head_dim]
+        Q_h = Q_h.transpose(0, 1)  # [num_heads, seq_len, head_dim]
+
+        K_h = K_h.view(sequence_length, self.num_heads, self.head_dim)
+        K_h = K_h.transpose(0, 1)
+
+        V_h = V_h.view(sequence_length, self.num_heads, self.head_dim)
+        V_h = V_h.transpose(0, 1)
+
+        attn_scores = torch.matmul(
+            Q_h,  # [num_heads, seq_len, head_dim]
+            K_h.transpose(-2, -1)  # [num_heads, head_dim, seq_len]
+        ) / (self.head_dim ** 0.5)  # [num_heads, seq_len, seq_len]
+
         attn_probs = F.softmax(attn_scores, dim=-1)  # [num_heads, seq_len, seq_len]
         attn_output = torch.matmul(attn_probs, V_h)  # [num_heads, seq_len, d_h]
         attn_output = attn_output.transpose(0, 1).contiguous().view(sequence_length, self.num_heads * self.head_dim)  # [seq_len, num_heads*d_h]
